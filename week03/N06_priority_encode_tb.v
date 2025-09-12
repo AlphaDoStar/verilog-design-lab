@@ -1,8 +1,8 @@
 module decoder_tb;
     reg [3:0] d;
-    wire x, y, z;
+    wire x, y, v;
     
-    priority_encoder e1 (d, x, y, z);
+    priority_encoder e1 (d, x, y, v);
 
     initial begin
         d = 4'b0000; #10;

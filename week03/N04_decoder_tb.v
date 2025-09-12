@@ -1,7 +1,7 @@
 module decoder_tb;
     reg x, y, z;
     wire [3:0] d;
-    reg [3:0] i;
+    reg [7:0] i;
     
     decoder d1 (x, y, z, d);
 

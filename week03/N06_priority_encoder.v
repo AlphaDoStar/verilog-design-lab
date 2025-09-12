@@ -1,6 +1,6 @@
 module priority_encoder (
     input wire [3:0] d,
-    output reg x, y, z
+    output reg x, y, v
 );
     always @(d) begin
         casex (d)

@@ -1,6 +1,6 @@
 module decoder (
     input wire x, y, z,
-    output reg [3:0] d
+    output reg [7:0] d
 );
     always @({x, y, z}) begin
         case ({x, y, z})
