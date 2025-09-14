@@ -1,4 +1,4 @@
-module mux_tb_v3;
+module mux_tb;
     reg [31:0] i;
     reg [2:0] s;
     wire [3:0] o;
