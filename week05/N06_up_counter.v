@@ -1,4 +1,4 @@
-module one_shot_trigger(
+module one_shot_trigger (
     input wire clk, rst, i,
     output reg o
 );
@@ -23,7 +23,7 @@ module up_counter (
 );
     wire a;
 
-    one_shot_trigger ost1(clk, rst, x, a);
+    one_shot_trigger ost1 (clk, rst, x, a);
 
     always @(posedge clk or negedge rst) begin
         if (!rst) state <= 2'b00;

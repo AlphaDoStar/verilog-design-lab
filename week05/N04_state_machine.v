@@ -1,4 +1,4 @@
-module one_shot_trigger(
+module one_shot_trigger (
     input wire clk, rst, i,
     output reg o
 );
@@ -30,9 +30,9 @@ module state_machine (
 
     wire a, b, c;
 
-    one_shot_trigger ost1(clk, rst, x[2], a);
-    one_shot_trigger ost2(clk, rst, x[1], b);
-    one_shot_trigger ost3(clk, rst, x[0], c);
+    one_shot_trigger ost1 (clk, rst, x[2], a);
+    one_shot_trigger ost2 (clk, rst, x[1], b);
+    one_shot_trigger ost3 (clk, rst, x[0], c);
 
     always @(posedge clk or negedge rst) begin
         if (!rst) state <= S0;

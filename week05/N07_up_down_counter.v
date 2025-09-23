@@ -24,7 +24,7 @@ module up_down_counter (
     wire a;
     reg d;  // up: 0, down: 1
 
-    one_shot_trigger ost1(clk, rst, x, a);
+    one_shot_trigger ost1 (clk, rst, x, a);
 
     always @(posedge clk or negedge rst) begin
         if (!rst) state <= 3'b000;
