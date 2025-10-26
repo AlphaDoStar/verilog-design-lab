@@ -1,4 +1,4 @@
-module display_name (
+module shift (
     input wire clk, rst,
     output wire E,
     output reg RS, RW,
