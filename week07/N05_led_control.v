@@ -29,7 +29,7 @@ module led_control (
                 8'b00100000: state <= INDIGO;
                 8'b01000000: state <= PURPLE;
                 8'b10000000: state <= WHITE;
-                default: state <= 24'd0;
+                // default: state <= 24'd0;
             endcase
         end
     end
