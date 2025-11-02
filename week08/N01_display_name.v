@@ -6,8 +6,8 @@ module display_name (
 );
     localparam DELAY = 3'b000;
     localparam FUNCTION_SET = 3'b001;
-    localparam ENTRY_MODE = 3'b010;
-    localparam DISP_ONOFF = 3'b011;
+    localparam DISP_ONOFF = 3'b010;
+    localparam ENTRY_MODE = 3'b011;
     localparam LINE1 = 3'b100;
     localparam LINE2 = 3'b101;
     localparam DELAY_T = 3'b110;
