@@ -69,13 +69,20 @@ module cursor (
                     if (cnt >= 100) begin
                         cnt <= 0;
                         state <= DELAY_T;
-                        addr <= 7'h00;
+                        case (sel)
+                            0: addr <= 7'h00;
+                            1: addr <= 7'h40;
+                        endcase
                     end
                 end
                 DELAY_T: begin
                     LED <= 8'b0000_0100;
                     cnt <= 0;
                     state <= |num_t ? WRITE : (|ctrl_t ? CURSOR : DELAY_T);
+                    case ({sel_rise, sel_fall})
+                        2'b01: addr <= 7'h00;
+                        2'b10: addr <= 7'h40;
+                    endcase
                 end
                 WRITE: begin
                     LED <= 8'b0000_0010;
@@ -149,8 +156,8 @@ module cursor (
                     end
                     else if (cnt == 25) begin
                         case (addr)
-                            7'h10: {RS, RW, DATA} <= 10'b00_1000_0000 + 7'h40;
-                            7'h50: {RS, RW, DATA} <= 10'b00_1000_0000 + 7'h00;
+                            7'h0F: {RS, RW, DATA} <= 10'b00_1000_0000 + 7'h40;
+                            7'h4F: {RS, RW, DATA} <= 10'b00_1000_0000 + 7'h00;
                         endcase
                     end
                     else {RS, RW, DATA} <= 10'b00_0000_1111;
