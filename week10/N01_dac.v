@@ -21,7 +21,10 @@ module dac (
     lcd_display ld1 (clk, rst, bin, E, RS, RW, DATA);
     
     always @(posedge clk or negedge rst) begin
-        if (!rst) state <= DELAY;
+        if (!rst) begin
+            cnt <= 0;
+            state <= DELAY;
+        end
         else begin
             cnt <= cnt + 1;
             case (state)
