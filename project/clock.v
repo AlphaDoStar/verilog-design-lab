@@ -96,7 +96,7 @@ module lcd_display (
     input wire mode_12_24,
     output wire E,
     output reg RS, RW,
-    output reg [7:0] DATA
+    output reg [7:0] DATA, LED
 );
     localparam DELAY = 3'b000;
     localparam FUNCTION_SET = 3'b001;
@@ -157,7 +157,7 @@ module lcd_display (
         end
     endfunction
 
-    wire [4:0] hour_display = get_foreign_hour(mode_12_24, hour);
+    wire [4:0] hour_display = get_hour_display(mode_12_24, hour);
     wire [15:0] am_pm = get_am_pm(mode_12_24, hour);
 
     wire [23:0] foreign_country_name = get_contry_name(country);
@@ -190,6 +190,7 @@ module lcd_display (
             prev_minute <= 0;
             prev_second <= 0;
             prev_mode <= 0;
+            LED <= 0;
         end
         else begin
             count <= count + 1;
