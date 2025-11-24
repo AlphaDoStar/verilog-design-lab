@@ -3,7 +3,7 @@ module clock (
     input wire [6:0] mode,
     input wire [11:0] button,
     output wire E, RS, RW,
-    output wire [7:0] DATA
+    output wire [7:0] DATA, LED
 );
     wire [11:0] button_t;
 
@@ -150,14 +150,14 @@ module lcd_display (
     wire [4:0] foreign_hour = get_foreign_hour(country, hour);
     wire [15:0] foreign_am_pm = get_am_pm(mode_12_24, foreign_hour);
 
-    wire input_changed = (country != prev_country) || (second != prev_second) || (mode_12_24 != prev_mode);
-
     reg [6:0] count;
     reg [2:0] state;
 
     reg [3:0] prev_country;
     reg [5:0] prev_second;
     reg prev_mode;
+
+    wire input_changed = (country != prev_country) || (second != prev_second) || (mode_12_24 != prev_mode);
 
     assign E = clock;
 
@@ -176,30 +176,35 @@ module lcd_display (
             prev_mode <= mode_12_24;
             case (state)
                 DELAY: begin
+                    LED <= 8'b1000_0000;
                     if (count >= 70) begin
                         count <= 0;
                         state <= FUNCTION_SET;
                     end
                 end
                 FUNCTION_SET: begin
+                    LED <= 8'b0100_0000;
                     if (count >= 30) begin
                         count <= 0;
                         state <= DISP_ONOFF;
                     end
                 end
                 DISP_ONOFF: begin
+                    LED <= 8'b0010_0000;
                     if (count >= 30) begin
                         count <= 0;
                         state <= ENTRY_MODE;
                     end
                 end
                 ENTRY_MODE: begin
+                    LED <= 8'b0001_0000;
                     if (count >= 30) begin
                         count <= 0;
                         state <= WRITE;
                     end
                 end
                 WRITE: begin
+                    LED <= 8'b0000_1000;
                     if (count >= 40) begin
                         count <= 0;
                         state <= DELAY_T;
@@ -207,17 +212,20 @@ module lcd_display (
                 end
                 DELAY_T: begin
                     count <= 0;
+                    LED <= 8'b0000_0100;
                     if (input_changed) begin
                         state <= CURSOR_AT_HOME;
                     end
                 end
                 CURSOR_AT_HOME: begin
+                    LED <= 8'b0000_0010;
                     if (count >= 5) begin
                         count <= 0;
                         state <= CLEAR_DISP;
                     end
                 end
                 CLEAR_DISP: begin
+                    LED <= 8'b0000_0001;
                     if (count >= 5) begin
                         count <= 0;
                         state <= WRITE;
