@@ -15,7 +15,7 @@ module clock (
     reg mode_12_24;
 
     one_shot_trigger #(.WIDTH(12)) ost1 (clock, reset, button, button_t);
-    lcd_display ld1 (clock, reset, country, hour, minute, second, mode_12_24, E, RS, RW, DATA);
+    lcd_display ld1 (clock, reset, country, hour, minute, second, mode_12_24, E, RS, RW, DATA, LED);
 
     always @(posedge clock or negedge reset) begin
         if (!reset) begin
@@ -132,6 +132,19 @@ module lcd_display (
         end
     endfunction
 
+    function [4:0] get_hour_display;
+        input mode_12_24;
+        input [4:0] hour;
+        begin
+            if (mode_12_24) begin
+                if (hour == 0) get_hour_display = 5'd12;
+                else if (hour > 12) get_hour_display = hour - 5'd12;
+                else get_hour_display = hour;
+            end
+            else get_hour_display = hour;
+        end
+    endfunction
+
     function [15:0] get_am_pm;
         input mode_12_24;
         input [4:0] hour;
@@ -144,20 +157,27 @@ module lcd_display (
         end
     endfunction
 
+    wire [4:0] hour_display = get_foreign_hour(mode_12_24, hour);
     wire [15:0] am_pm = get_am_pm(mode_12_24, hour);
 
     wire [23:0] foreign_country_name = get_contry_name(country);
     wire [4:0] foreign_hour = get_foreign_hour(country, hour);
+    wire [4:0] foreign_hour_display = get_hour_display(mode_12_24, foreign_hour);
     wire [15:0] foreign_am_pm = get_am_pm(mode_12_24, foreign_hour);
 
     reg [6:0] count;
     reg [2:0] state;
 
     reg [3:0] prev_country;
-    reg [5:0] prev_second;
+    reg [4:0] prev_hour;
+    reg [5:0] prev_minute, prev_second;
     reg prev_mode;
 
-    wire input_changed = (country != prev_country) || (second != prev_second) || (mode_12_24 != prev_mode);
+    wire input_changed = (country != prev_country) ||
+                         (hour != prev_hour) ||
+                         (minute != prev_minute) ||
+                         (second != prev_second) ||
+                         (mode_12_24 != prev_mode);
 
     assign E = clock;
 
@@ -166,45 +186,49 @@ module lcd_display (
             count <= 0;
             state <= DELAY;
             prev_country <= 0;
+            prev_hour <= 0;
+            prev_minute <= 0;
             prev_second <= 0;
             prev_mode <= 0;
         end
         else begin
             count <= count + 1;
             prev_country <= country;
+            prev_hour <= hour;
+            prev_minute <= minute;
             prev_second <= second;
             prev_mode <= mode_12_24;
             case (state)
                 DELAY: begin
-                    LED <= 8'b1000_0000;
+                    // LED <= 8'b1000_0000;
                     if (count >= 70) begin
                         count <= 0;
                         state <= FUNCTION_SET;
                     end
                 end
                 FUNCTION_SET: begin
-                    LED <= 8'b0100_0000;
+                    // LED <= 8'b0100_0000;
                     if (count >= 30) begin
                         count <= 0;
                         state <= DISP_ONOFF;
                     end
                 end
                 DISP_ONOFF: begin
-                    LED <= 8'b0010_0000;
+                    // LED <= 8'b0010_0000;
                     if (count >= 30) begin
                         count <= 0;
                         state <= ENTRY_MODE;
                     end
                 end
                 ENTRY_MODE: begin
-                    LED <= 8'b0001_0000;
+                    // LED <= 8'b0001_0000;
                     if (count >= 30) begin
                         count <= 0;
                         state <= WRITE;
                     end
                 end
                 WRITE: begin
-                    LED <= 8'b0000_1000;
+                    // LED <= 8'b0000_1000;
                     if (count >= 40) begin
                         count <= 0;
                         state <= DELAY_T;
@@ -212,20 +236,20 @@ module lcd_display (
                 end
                 DELAY_T: begin
                     count <= 0;
-                    LED <= 8'b0000_0100;
+                    // LED <= 8'b0000_0100;
                     if (input_changed) begin
                         state <= CURSOR_AT_HOME;
                     end
                 end
                 CURSOR_AT_HOME: begin
-                    LED <= 8'b0000_0010;
+                    // LED <= 8'b0000_0010;
                     if (count >= 5) begin
                         count <= 0;
                         state <= CLEAR_DISP;
                     end
                 end
                 CLEAR_DISP: begin
-                    LED <= 8'b0000_0001;
+                    // LED <= 8'b0000_0001;
                     if (count >= 5) begin
                         count <= 0;
                         state <= WRITE;
@@ -246,38 +270,38 @@ module lcd_display (
                 WRITE: begin
                     case (count)
                         00: {RS, RW, DATA} <= 10'b00_1000_0000;
-                        01: {RS, RW, DATA} <= {2'b00, 8'h4B}; // K
-                        02: {RS, RW, DATA} <= {2'b00, 8'h4F}; // O
-                        03: {RS, RW, DATA} <= {2'b00, 8'h52}; // R
-                        04: {RS, RW, DATA} <= 10'b00_0010_0000;
-                        05: {RS, RW, DATA} <= 10'b00_0011_0000 + (hour / 10);
-                        06: {RS, RW, DATA} <= 10'b00_0011_0000 + (hour % 10);
-                        07: {RS, RW, DATA} <= {2'b00, 8'h3A}; // :
-                        08: {RS, RW, DATA} <= 10'b00_0011_0000 + (minute / 10);
-                        09: {RS, RW, DATA} <= 10'b00_0011_0000 + (minute % 10);
-                        10: {RS, RW, DATA} <= {2'b00, 8'h3A}; // :
-                        11: {RS, RW, DATA} <= 10'b00_0011_0000 + (second / 10);
-                        12: {RS, RW, DATA} <= 10'b00_0011_0000 + (second % 10);
-                        13: {RS, RW, DATA} <= 10'b00_0010_0000;
-                        14: {RS, RW, DATA} <= {2'b00, am_pm[15:8]};
-                        15: {RS, RW, DATA} <= {2'b00, am_pm[7:0]};
+                        01: {RS, RW, DATA} <= {2'b10, 8'h4B}; // K
+                        02: {RS, RW, DATA} <= {2'b10, 8'h4F}; // O
+                        03: {RS, RW, DATA} <= {2'b10, 8'h52}; // R
+                        04: {RS, RW, DATA} <= 10'b10_0010_0000;
+                        05: {RS, RW, DATA} <= 10'b10_0011_0000 + (hour_display / 10);
+                        06: {RS, RW, DATA} <= 10'b10_0011_0000 + (hour_display % 10);
+                        07: {RS, RW, DATA} <= {2'b10, 8'h3A}; // :
+                        08: {RS, RW, DATA} <= 10'b10_0011_0000 + (minute / 10);
+                        09: {RS, RW, DATA} <= 10'b10_0011_0000 + (minute % 10);
+                        10: {RS, RW, DATA} <= {2'b10, 8'h3A}; // :
+                        11: {RS, RW, DATA} <= 10'b10_0011_0000 + (second / 10);
+                        12: {RS, RW, DATA} <= 10'b10_0011_0000 + (second % 10);
+                        13: {RS, RW, DATA} <= 10'b10_0010_0000;
+                        14: {RS, RW, DATA} <= {2'b10, am_pm[15:8]};
+                        15: {RS, RW, DATA} <= {2'b10, am_pm[7:0]};
 
                         16: {RS, RW, DATA} <= 10'b00_1100_0000;
-                        17: {RS, RW, DATA} <= {2'b00, foreign_country_name[23:16]};
-                        18: {RS, RW, DATA} <= {2'b00, foreign_country_name[15:8]};
-                        19: {RS, RW, DATA} <= {2'b00, foreign_country_name[7:0]};
-                        20: {RS, RW, DATA} <= 10'b00_0010_0000;
-                        21: {RS, RW, DATA} <= 10'b00_0011_0000 + (foreign_hour / 10);
-                        22: {RS, RW, DATA} <= 10'b00_0011_0000 + (foreign_hour % 10);
-                        23: {RS, RW, DATA} <= {2'b00, 8'h3A}; // :
-                        24: {RS, RW, DATA} <= 10'b00_0011_0000 + (minute / 10);
-                        25: {RS, RW, DATA} <= 10'b00_0011_0000 + (minute % 10);
-                        26: {RS, RW, DATA} <= {2'b00, 8'h3A}; // :
-                        27: {RS, RW, DATA} <= 10'b00_0011_0000 + (second / 10);
-                        28: {RS, RW, DATA} <= 10'b00_0011_0000 + (second % 10);
-                        29: {RS, RW, DATA} <= 10'b00_0010_0000;
-                        30: {RS, RW, DATA} <= {2'b00, foreign_am_pm[15:8]};
-                        31: {RS, RW, DATA} <= {2'b00, foreign_am_pm[7:0]};
+                        17: {RS, RW, DATA} <= {2'b10, foreign_country_name[23:16]};
+                        18: {RS, RW, DATA} <= {2'b10, foreign_country_name[15:8]};
+                        19: {RS, RW, DATA} <= {2'b10, foreign_country_name[7:0]};
+                        20: {RS, RW, DATA} <= 10'b10_0010_0000;
+                        21: {RS, RW, DATA} <= 10'b10_0011_0000 + (foreign_hour_display / 10);
+                        22: {RS, RW, DATA} <= 10'b10_0011_0000 + (foreign_hour_display % 10);
+                        23: {RS, RW, DATA} <= {2'b10, 8'h3A}; // :
+                        24: {RS, RW, DATA} <= 10'b10_0011_0000 + (minute / 10);
+                        25: {RS, RW, DATA} <= 10'b10_0011_0000 + (minute % 10);
+                        26: {RS, RW, DATA} <= {2'b10, 8'h3A}; // :
+                        27: {RS, RW, DATA} <= 10'b10_0011_0000 + (second / 10);
+                        28: {RS, RW, DATA} <= 10'b10_0011_0000 + (second % 10);
+                        29: {RS, RW, DATA} <= 10'b10_0010_0000;
+                        30: {RS, RW, DATA} <= {2'b10, foreign_am_pm[15:8]};
+                        31: {RS, RW, DATA} <= {2'b10, foreign_am_pm[7:0]};
 
                         default: {RS, RW, DATA} <= 10'b11_0000_0000;
                     endcase
