@@ -3,7 +3,8 @@ module clock (
     input wire [6:0] mode,
     input wire [11:0] button,
     output wire E, RS, RW,
-    output wire [7:0] DATA, LED,
+    output wire [7:0] DATA,
+    output reg [7:0] LED,  // wire → reg 변경
     output wire piezo
 );
     wire [11:0] button_t;
@@ -20,27 +21,20 @@ module clock (
     reg alarm_enabled;
 
     // 멜로디 녹음/재생
-    reg [7:0] melody[0:79];     // 8초 * 10샘플/초 = 80 샘플
-    reg [6:0] melody_length;    // 0~79
-    reg [6:0] record_idx;       // 녹음 인덱스
-    reg [6:0] play_idx;         // 재생 인덱스
-    reg [6:0] sample_count;     // 100ms 카운터 (0~99)
-    reg playing;                // 재생 중 플래그
-    reg alarm_triggered;        // 알람 울림 플래그
+    reg [7:0] melody[0:79];
+    reg [6:0] melody_length;
+    reg [6:0] play_idx;
+    reg [6:0] sample_count;
+    reg playing;
+    reg alarm_triggered;
 
     wire record_mode = mode[3];
-    wire [7:0] melody_led = (melody_length >= 70) ? 8'b11111111 :
-                            (melody_length >= 60) ? 8'b01111111 :
-                            (melody_length >= 50) ? 8'b00111111 :
-                            (melody_length >= 40) ? 8'b00011111 :
-                            (melody_length >= 30) ? 8'b00001111 :
-                            (melody_length >= 20) ? 8'b00000111 :
-                            (melody_length >= 10) ? 8'b00000011 :
-                            (melody_length > 0)   ? 8'b00000001 : 8'b00000000;
-
-    assign LED = record_mode ? melody_led : {7'b0000_000, alarm_enabled};
-
-    wire [7:0] current_melody = playing ? melody[play_idx] : 8'b00000000;
+    
+    // 녹음 모드: 실시간 버튼 또는 재생 중 멜로디 출력
+    // 일반 모드: 재생 중이면 멜로디, 아니면 무음
+    wire [7:0] piezo_input = record_mode ? 
+                             (playing ? melody[play_idx] : button[7:0]) :
+                             (playing ? melody[play_idx] : 8'b00000000);
 
     one_shot_trigger #(.WIDTH(12)) ost1 (clock, reset, button, button_t);
     
@@ -65,7 +59,7 @@ module clock (
     piezo_player pp1 (
         .clock(clock),
         .reset(reset),
-        .button(current_melody),
+        .button(piezo_input),
         .piezo(piezo)
     );
 
@@ -82,20 +76,38 @@ module clock (
             alarm_minute <= 0;
             alarm_enabled <= 0;
             melody_length <= 0;
-            record_idx <= 0;
             play_idx <= 0;
             sample_count <= 0;
             playing <= 0;
             alarm_triggered <= 0;
+            LED <= 0;
             for (i = 0; i < 80; i = i + 1) begin
                 melody[i] <= 8'b00000000;
             end
         end
         else begin
+            // LED 업데이트
+            if (record_mode) begin
+                // 녹음 모드: 녹음량 표시
+                if (melody_length >= 70) LED <= 8'b11111111;
+                else if (melody_length >= 60) LED <= 8'b01111111;
+                else if (melody_length >= 50) LED <= 8'b00111111;
+                else if (melody_length >= 40) LED <= 8'b00011111;
+                else if (melody_length >= 30) LED <= 8'b00001111;
+                else if (melody_length >= 20) LED <= 8'b00000111;
+                else if (melody_length >= 10) LED <= 8'b00000011;
+                else if (melody_length > 0) LED <= 8'b00000001;
+                else LED <= 8'b00000000;
+            end
+            else begin
+                // 일반 모드: 알람 on/off
+                LED <= {7'b0000_000, alarm_enabled};
+            end
+
             // 재생 로직
             if (playing) begin
                 sample_count <= sample_count + 1;
-                if (sample_count == 99) begin  // 100ms 경과
+                if (sample_count == 99) begin
                     sample_count <= 0;
                     if (play_idx >= melody_length - 1) begin
                         playing <= 0;
@@ -108,7 +120,7 @@ module clock (
                 end
             end
 
-            // 알람 체크 (일반 모드일 때만)
+            // 알람 체크
             if (!record_mode && alarm_enabled && !alarm_triggered && !playing) begin
                 if (hour == alarm_hour && minute == alarm_minute && second == 0) begin
                     if (melody_length > 0) begin
@@ -120,13 +132,12 @@ module clock (
                 end
             end
 
-            // 알람이 지난 후 1초가 지나면 alarm_triggered 해제
             if (alarm_triggered && (second != 0)) begin
                 alarm_triggered <= 0;
             end
 
             casez (mode)
-                7'b1??????: begin  // 시간 설정 모드
+                7'b1??????: begin
                     case (button_t)
                         12'b1000_0000_0000: hour <= (hour == 0) ? 23 : hour - 1;
                         12'b0010_0000_0000: hour <= (hour == 23) ? 0 : hour + 1;
@@ -137,14 +148,14 @@ module clock (
                         12'b0000_0000_0010: mode_12_24 <= !mode_12_24;
                     endcase
                 end
-                7'b01?????: begin  // 국가 선택 모드
+                7'b01?????: begin
                     case (button_t)
                         12'b1000_0000_0000: country <= 4'h0;
                         12'b0100_0000_0000: country <= 4'h1;
                         12'b0010_0000_0000: country <= 4'h2;
                     endcase
                 end
-                7'b001????: begin  // 알람 설정 모드
+                7'b001????: begin
                     case (button_t)
                         12'b1000_0000_0000: alarm_hour <= (alarm_hour == 0) ? 23 : alarm_hour - 1;
                         12'b0010_0000_0000: alarm_hour <= (alarm_hour == 23) ? 0 : alarm_hour + 1;
@@ -163,28 +174,30 @@ module clock (
                         end
                     end
                     // 녹음 (버튼 0-7)
-                    else if (|button_t[7:0] && melody_length < 80) begin
+                    else if (|button[7:0] && melody_length < 80 && !playing) begin
                         sample_count <= sample_count + 1;
-                        if (sample_count == 99) begin  // 100ms마다 샘플링
+                        if (sample_count == 99) begin
                             sample_count <= 0;
-                            melody[melody_length] <= button[7:0];  // button_t 아닌 button 사용
+                            melody[melody_length] <= button[7:0];
                             melody_length <= melody_length + 1;
                         end
                     end
-                    else begin
+                    else if (!playing) begin
                         sample_count <= 0;
                     end
                     
                     // 리셋 버튼 (버튼 10)
                     if (button_t[10]) begin
                         melody_length <= 0;
-                        record_idx <= 0;
+                        play_idx <= 0;
+                        playing <= 0;
+                        sample_count <= 0;
                         for (i = 0; i < 80; i = i + 1) begin
                             melody[i] <= 8'b00000000;
                         end
                     end
                 end
-                default: begin  // 일반 동작 모드
+                default: begin
                     count <= count + 1;
                     if (count == 999) begin
                         count <= 0;
@@ -506,31 +519,30 @@ module piezo_player (
     input wire [7:0] button,
     output reg piezo
 );
-    localparam C2 = 12'd3830;
-    localparam D2 = 12'd3400;
-    localparam E2 = 12'd3038;
-    localparam F2 = 12'd2864;
-    localparam G2 = 12'd2550;
-    localparam A2 = 12'd2272;
-    localparam B2 = 12'd2028;
-    localparam C3 = 12'd1912;
+    localparam C2 = 12'd3830;  // 도 (button[0])
+    localparam D2 = 12'd3400;  // 레 (button[1])
+    localparam E2 = 12'd3038;  // 미 (button[2])
+    localparam F2 = 12'd2864;  // 파 (button[3])
+    localparam G2 = 12'd2550;  // 솔 (button[4])
+    localparam A2 = 12'd2272;  // 라 (button[5])
+    localparam B2 = 12'd2028;  // 시 (button[6])
+    localparam C3 = 12'd1912;  // 높은도 (button[7])
 
     reg [11:0] cnt, lim;
 
     always @(*) begin
         if (!reset) lim = 12'd0;
         else begin
-            casez (button)
-                8'b00000001: lim = C2;
-                8'b0000001?: lim = D2;
-                8'b000001??: lim = E2;
-                8'b00001???: lim = F2;
-                8'b0001????: lim = G2;
-                8'b001?????: lim = A2;
-                8'b01??????: lim = B2;
-                8'b1???????: lim = C3;
-                default: lim = 12'd0;
-            endcase
+            // 우선순위: 낮은 비트부터 (버튼 0이 최우선)
+            if (button[0]) lim = C2;
+            else if (button[1]) lim = D2;
+            else if (button[2]) lim = E2;
+            else if (button[3]) lim = F2;
+            else if (button[4]) lim = G2;
+            else if (button[5]) lim = A2;
+            else if (button[6]) lim = B2;
+            else if (button[7]) lim = C3;
+            else lim = 12'd0;
         end
     end
 
