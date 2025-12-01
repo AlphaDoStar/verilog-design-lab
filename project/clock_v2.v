@@ -1,13 +1,35 @@
 module clock (
-    input wire clock, reset,
+    input wire clock,   // 1MHz 메인 클럭
+    input wire reset,
     input wire [6:0] mode,
     input wire [11:0] button,
     output wire E, RS, RW,
     output wire [7:0] DATA,
-    output reg [7:0] LED,  // wire → reg 변경
+    output reg [7:0] LED,
     output wire piezo
 );
     wire [11:0] button_t;
+
+    // 클럭 분주기
+    reg [9:0] clk_div;
+    reg slow_clock;  // 1kHz 클럭
+
+    // 1MHz → 1kHz 분주
+    always @(posedge clock or negedge reset) begin
+        if (!reset) begin
+            clk_div <= 0;
+            slow_clock <= 0;
+        end
+        else begin
+            if (clk_div == 499) begin  // 500 카운트 = 반주기
+                clk_div <= 0;
+                slow_clock <= ~slow_clock;
+            end
+            else begin
+                clk_div <= clk_div + 1;
+            end
+        end
+    end
 
     reg [9:0] count;
 
@@ -30,16 +52,14 @@ module clock (
 
     wire record_mode = mode[3];
     
-    // 녹음 모드: 실시간 버튼 또는 재생 중 멜로디 출력
-    // 일반 모드: 재생 중이면 멜로디, 아니면 무음
     wire [7:0] piezo_input = record_mode ? 
                              (playing ? melody[play_idx] : button[7:0]) :
                              (playing ? melody[play_idx] : 8'b00000000);
 
-    one_shot_trigger #(.WIDTH(12)) ost1 (clock, reset, button, button_t);
+    one_shot_trigger #(.WIDTH(12)) ost1 (slow_clock, reset, button, button_t);
     
     lcd_display ld1 (
-        .clock(clock), 
+        .clock(slow_clock),  // 1kHz 클럭 사용
         .reset(reset), 
         .mode(mode),
         .country(country), 
@@ -57,14 +77,14 @@ module clock (
     );
 
     piezo_player pp1 (
-        .clock(clock),
+        .clock(clock),  // 1MHz 클럭 사용
         .reset(reset),
         .button(piezo_input),
         .piezo(piezo)
     );
 
     integer i;
-    always @(posedge clock or negedge reset) begin
+    always @(posedge slow_clock or negedge reset) begin  // slow_clock 사용
         if (!reset) begin
             count <= 0;
             country <= 4'h0;
@@ -88,7 +108,6 @@ module clock (
         else begin
             // LED 업데이트
             if (record_mode) begin
-                // 녹음 모드: 녹음량 표시
                 if (melody_length >= 70) LED <= 8'b11111111;
                 else if (melody_length >= 60) LED <= 8'b01111111;
                 else if (melody_length >= 50) LED <= 8'b00111111;
@@ -100,7 +119,6 @@ module clock (
                 else LED <= 8'b00000000;
             end
             else begin
-                // 일반 모드: 알람 on/off
                 LED <= {7'b0000_000, alarm_enabled};
             end
 
@@ -164,8 +182,7 @@ module clock (
                         12'b0000_0000_0001: alarm_enabled <= !alarm_enabled;
                     endcase
                 end
-                7'b0001???: begin  // 녹음 모드
-                    // 재생 버튼 (버튼 11)
+                7'b0001???: begin
                     if (button_t[11]) begin
                         if (melody_length > 0 && !playing) begin
                             playing <= 1;
@@ -173,7 +190,6 @@ module clock (
                             sample_count <= 0;
                         end
                     end
-                    // 녹음 (버튼 0-7)
                     else if (|button[7:0] && melody_length < 80 && !playing) begin
                         sample_count <= sample_count + 1;
                         if (sample_count == 99) begin
@@ -186,7 +202,6 @@ module clock (
                         sample_count <= 0;
                     end
                     
-                    // 리셋 버튼 (버튼 10)
                     if (button_t[10]) begin
                         melody_length <= 0;
                         play_idx <= 0;
@@ -515,34 +530,35 @@ module lcd_display (
 endmodule
 
 module piezo_player (
-    input wire clock, reset,
+    input wire clock, reset,  // 1MHz 클럭
     input wire [7:0] button,
     output reg piezo
 );
-    localparam C2 = 12'd3830;  // 도 (button[0])
-    localparam D2 = 12'd3400;  // 레 (button[1])
-    localparam E2 = 12'd3038;  // 미 (button[2])
-    localparam F2 = 12'd2864;  // 파 (button[3])
-    localparam G2 = 12'd2550;  // 솔 (button[4])
-    localparam A2 = 12'd2272;  // 라 (button[5])
-    localparam B2 = 12'd2028;  // 시 (button[6])
-    localparam C3 = 12'd1912;  // 높은도 (button[7])
+    localparam C2 = 12'd3830;
+    localparam D2 = 12'd3400;
+    localparam E2 = 12'd3038;
+    localparam F2 = 12'd2864;
+    localparam G2 = 12'd2550;
+    localparam A2 = 12'd2272;
+    localparam B2 = 12'd2028;
+    localparam C3 = 12'd1912;
 
     reg [11:0] cnt, lim;
 
     always @(*) begin
         if (!reset) lim = 12'd0;
         else begin
-            // 우선순위: 낮은 비트부터 (버튼 0이 최우선)
-            if (button[0]) lim = C2;
-            else if (button[1]) lim = D2;
-            else if (button[2]) lim = E2;
-            else if (button[3]) lim = F2;
-            else if (button[4]) lim = G2;
-            else if (button[5]) lim = A2;
-            else if (button[6]) lim = B2;
-            else if (button[7]) lim = C3;
-            else lim = 12'd0;
+            casez (button)
+                8'b1???????: lim = C3;
+                8'b01??????: lim = B2;
+                8'b001?????: lim = A2;
+                8'b0001????: lim = G2;
+                8'b00001???: lim = F2;
+                8'b000001??: lim = E2;
+                8'b0000001?: lim = D2;
+                8'b00000001: lim = C2;
+                default: lim = 12'd0;
+            endcase
         end
     end
 
