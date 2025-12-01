@@ -1,5 +1,5 @@
 module clock (
-    input wire main_clock,
+    input wire clock,
     input wire reset,
     input wire [6:0] mode,
     input wire [11:0] button,
@@ -12,7 +12,7 @@ module clock (
     reg [9:0] clock_div;
     reg slow_clock;
 
-    always @(posedge main_clock or negedge reset) begin
+    always @(posedge clock or negedge reset) begin
         if (!reset) begin
             clock_div <= 0;
             slow_clock <= 0;
@@ -77,7 +77,7 @@ module clock (
     );
 
     piezo_player pp1 (
-        .clock(main_clock),
+        .clock(clock),
         .reset(reset),
         .button(piezo_button),
         .PIEZO(PIEZO)
@@ -102,10 +102,6 @@ module clock (
             alarm_enabled <= 0;
         end
         else begin
-            if (!record_mode) begin
-                LED <= {7'b0000_000, alarm_enabled};
-            end
-
             casez (mode)
                 7'b1??????: begin
                     case (button_t)
@@ -165,9 +161,9 @@ module alarm_recorder (
     output reg [7:0] piezo_button,
     output reg [7:0] melody_led
 );
-    reg [7:0] melody[0:7999];
-    reg [12:0] melody_length;
-    reg [12:0] play_index;
+    reg [7:0] melody[0:1999];  // 2초 = 2000 샘플
+    reg [10:0] melody_length;  // 0~1999 (11비트)
+    reg [10:0] play_index;
     reg playing;
     reg alarm_triggered;
 
@@ -181,7 +177,7 @@ module alarm_recorder (
             alarm_triggered <= 0;
             piezo_button <= 8'b00000000;
             melody_led <= 8'b00000000;
-            for (i = 0; i < 8000; i = i + 1) begin
+            for (i = 0; i < 2000; i = i + 1) begin
                 melody[i] <= 8'b00000000;
             end
         end
@@ -191,7 +187,7 @@ module alarm_recorder (
             else piezo_button <= 8'b00000000;
 
             if (record_mode) begin
-                if (melody_length < 8000) begin
+                if (melody_length < 2000) begin
                     melody[melody_length] <= button;
                     melody_length <= melody_length + 1;
                 end
@@ -205,19 +201,20 @@ module alarm_recorder (
                         melody_length <= 0;
                         play_index <= 0;
                         playing <= 0;
-                        for (i = 0; i < 8000; i = i + 1) begin
+                        for (i = 0; i < 2000; i = i + 1) begin
                             melody[i] <= 8'b00000000;
                         end
                     end
                 end
 
-                if (melody_length >= 7000) melody_led <= 8'b1111_1111;
-                else if (melody_length >= 6000) melody_led <= 8'b1111_1110;
-                else if (melody_length >= 5000) melody_led <= 8'b1111_1100;
-                else if (melody_length >= 4000) melody_led <= 8'b1111_1000;
-                else if (melody_length >= 3000) melody_led <= 8'b1111_0000;
-                else if (melody_length >= 2000) melody_led <= 8'b1110_0000;
-                else if (melody_length >= 1000) melody_led <= 8'b1100_0000;
+                // LED 업데이트: 250개당 1개 = 0.25초당 1개
+                if (melody_length >= 1750) melody_led <= 8'b1111_1111;
+                else if (melody_length >= 1500) melody_led <= 8'b1111_1110;
+                else if (melody_length >= 1250) melody_led <= 8'b1111_1100;
+                else if (melody_length >= 1000) melody_led <= 8'b1111_1000;
+                else if (melody_length >= 750) melody_led <= 8'b1111_0000;
+                else if (melody_length >= 500) melody_led <= 8'b1110_0000;
+                else if (melody_length >= 250) melody_led <= 8'b1100_0000;
                 else if (melody_length > 0) melody_led <= 8'b1000_0000;
                 else melody_led <= 8'b0000_0000;
             end
