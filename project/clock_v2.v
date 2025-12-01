@@ -1,32 +1,30 @@
 module clock (
-    input wire clock,   // 1MHz 메인 클럭
+    input wire main_clock,
     input wire reset,
     input wire [6:0] mode,
     input wire [11:0] button,
     output wire E, RS, RW,
     output wire [7:0] DATA,
     output reg [7:0] LED,
-    output wire piezo
+    output wire PIEZO
 );
     wire [11:0] button_t;
 
-    // 클럭 분주기
-    reg [9:0] clk_div;
-    reg slow_clock;  // 1kHz 클럭
+    reg [9:0] clock_div;
+    reg slow_clock;
 
-    // 1MHz → 1kHz 분주
-    always @(posedge clock or negedge reset) begin
+    always @(posedge main_clock or negedge reset) begin
         if (!reset) begin
-            clk_div <= 0;
+            clock_div <= 0;
             slow_clock <= 0;
         end
         else begin
-            if (clk_div == 499) begin  // 500 카운트 = 반주기
-                clk_div <= 0;
+            if (clock_div == 499) begin
+                clock_div <= 0;
                 slow_clock <= ~slow_clock;
             end
             else begin
-                clk_div <= clk_div + 1;
+                clock_div <= clock_div + 1;
             end
         end
     end
@@ -42,24 +40,14 @@ module clock (
     reg [5:0] alarm_minute;
     reg alarm_enabled;
 
-    // 멜로디 녹음/재생
-    reg [7:0] melody[0:79];
-    reg [6:0] melody_length;
-    reg [6:0] play_idx;
-    reg [6:0] sample_count;
-    reg playing;
-    reg alarm_triggered;
-
     wire record_mode = mode[3];
-    
-    wire [7:0] piezo_input = record_mode ? 
-                             (playing ? melody[play_idx] : button[7:0]) :
-                             (playing ? melody[play_idx] : 8'b00000000);
+    wire alarm_trigger;
+    wire [7:0] piezo_button;
 
     one_shot_trigger #(.WIDTH(12)) ost1 (slow_clock, reset, button, button_t);
     
     lcd_display ld1 (
-        .clock(slow_clock),  // 1kHz 클럭 사용
+        .clock(slow_clock),
         .reset(reset), 
         .mode(mode),
         .country(country), 
@@ -76,15 +64,31 @@ module clock (
         .DATA(DATA)
     );
 
-    piezo_player pp1 (
-        .clock(clock),  // 1MHz 클럭 사용
+    alarm_recorder ar1 (
+        .clock(slow_clock),
         .reset(reset),
-        .button(piezo_input),
-        .piezo(piezo)
+        .record_mode(record_mode),
+        .button(button),
+        .button_t(button_t),
+        .alarm_trigger(alarm_trigger),
+        .piezo_button(piezo_button),
+        .melody_led(LED)
     );
 
+    piezo_player pp1 (
+        .clock(main_clock),
+        .reset(reset),
+        .button(piezo_button),
+        .PIEZO(PIEZO)
+    );
+
+    assign alarm_trigger = alarm_enabled && 
+                          (hour == alarm_hour) && 
+                          (minute == alarm_minute) && 
+                          (second == 0);
+
     integer i;
-    always @(posedge slow_clock or negedge reset) begin  // slow_clock 사용
+    always @(posedge slow_clock or negedge reset) begin
         if (!reset) begin
             count <= 0;
             country <= 4'h0;
@@ -95,63 +99,10 @@ module clock (
             alarm_hour <= 0;
             alarm_minute <= 0;
             alarm_enabled <= 0;
-            melody_length <= 0;
-            play_idx <= 0;
-            sample_count <= 0;
-            playing <= 0;
-            alarm_triggered <= 0;
-            LED <= 0;
-            for (i = 0; i < 80; i = i + 1) begin
-                melody[i] <= 8'b00000000;
-            end
         end
         else begin
-            // LED 업데이트
-            if (record_mode) begin
-                if (melody_length >= 70) LED <= 8'b11111111;
-                else if (melody_length >= 60) LED <= 8'b01111111;
-                else if (melody_length >= 50) LED <= 8'b00111111;
-                else if (melody_length >= 40) LED <= 8'b00011111;
-                else if (melody_length >= 30) LED <= 8'b00001111;
-                else if (melody_length >= 20) LED <= 8'b00000111;
-                else if (melody_length >= 10) LED <= 8'b00000011;
-                else if (melody_length > 0) LED <= 8'b00000001;
-                else LED <= 8'b00000000;
-            end
-            else begin
+            if (!record_mode) begin
                 LED <= {7'b0000_000, alarm_enabled};
-            end
-
-            // 재생 로직
-            if (playing) begin
-                sample_count <= sample_count + 1;
-                if (sample_count == 99) begin
-                    sample_count <= 0;
-                    if (play_idx >= melody_length - 1) begin
-                        playing <= 0;
-                        play_idx <= 0;
-                        alarm_triggered <= 0;
-                    end
-                    else begin
-                        play_idx <= play_idx + 1;
-                    end
-                end
-            end
-
-            // 알람 체크
-            if (!record_mode && alarm_enabled && !alarm_triggered && !playing) begin
-                if (hour == alarm_hour && minute == alarm_minute && second == 0) begin
-                    if (melody_length > 0) begin
-                        playing <= 1;
-                        play_idx <= 0;
-                        sample_count <= 0;
-                        alarm_triggered <= 1;
-                    end
-                end
-            end
-
-            if (alarm_triggered && (second != 0)) begin
-                alarm_triggered <= 0;
             end
 
             casez (mode)
@@ -179,38 +130,8 @@ module clock (
                         12'b0010_0000_0000: alarm_hour <= (alarm_hour == 23) ? 0 : alarm_hour + 1;
                         12'b0001_0000_0000: alarm_minute <= (alarm_minute == 0) ? 59 : alarm_minute - 1;
                         12'b0000_0100_0000: alarm_minute <= (alarm_minute == 59) ? 0 : alarm_minute + 1;
-                        12'b0000_0000_0001: alarm_enabled <= !alarm_enabled;
+                        12'b0000_0000_0010: alarm_enabled <= !alarm_enabled;
                     endcase
-                end
-                7'b0001???: begin
-                    if (button_t[11]) begin
-                        if (melody_length > 0 && !playing) begin
-                            playing <= 1;
-                            play_idx <= 0;
-                            sample_count <= 0;
-                        end
-                    end
-                    else if (|button[7:0] && melody_length < 80 && !playing) begin
-                        sample_count <= sample_count + 1;
-                        if (sample_count == 99) begin
-                            sample_count <= 0;
-                            melody[melody_length] <= button[7:0];
-                            melody_length <= melody_length + 1;
-                        end
-                    end
-                    else if (!playing) begin
-                        sample_count <= 0;
-                    end
-                    
-                    if (button_t[10]) begin
-                        melody_length <= 0;
-                        play_idx <= 0;
-                        playing <= 0;
-                        sample_count <= 0;
-                        for (i = 0; i < 80; i = i + 1) begin
-                            melody[i] <= 8'b00000000;
-                        end
-                    end
                 end
                 default: begin
                     count <= count + 1;
@@ -230,6 +151,92 @@ module clock (
                     end
                 end
             endcase
+        end
+    end
+endmodule
+
+module alarm_recorder (
+    input wire clock, reset,
+    input wire record_mode,
+    input wire [7:0] button,
+    input wire [11:0] button_t,
+    input wire alarm_trigger,
+    output reg [7:0] piezo_button,
+    output reg [7:0] melody_led
+);
+    reg [7:0] melody[0:7999];
+    reg [12:0] melody_length;
+    reg [12:0] play_index;
+    reg playing;
+    reg alarm_triggered;
+
+    integer i;
+
+    always @(posedge clock or negedge reset) begin
+        if (!reset) begin
+            melody_length <= 0;
+            play_index <= 0;
+            playing <= 0;
+            alarm_triggered <= 0;
+            piezo_button <= 8'b00000000;
+            melody_led <= 8'b00000000;
+            for (i = 0; i < 8000; i = i + 1) begin
+                melody[i] <= 8'b00000000;
+            end
+        end
+        else begin
+            if (record_mode) piezo_button <= button;
+            else if (playing) piezo_button <= melody[play_index];
+            else piezo_button <= 8'b00000000;
+
+            if (record_mode) begin
+                if (melody_length < 8000) begin
+                    melody[melody_length] <= button;
+                    melody_length <= melody_length + 1;
+                end
+                else begin
+                    if (button_t[9] && !playing && melody_length > 0) begin
+                        play_index <= 0;
+                        playing <= 1;
+                    end
+
+                    if (button_t[11]) begin
+                        melody_length <= 0;
+                        play_index <= 0;
+                        playing <= 0;
+                        for (i = 0; i < 8000; i = i + 1) begin
+                            melody[i] <= 8'b00000000;
+                        end
+                    end
+                end
+
+                if (melody_length >= 7000) melody_led <= 8'b1111_1111;
+                else if (melody_length >= 6000) melody_led <= 8'b1111_1110;
+                else if (melody_length >= 5000) melody_led <= 8'b1111_1100;
+                else if (melody_length >= 4000) melody_led <= 8'b1111_1000;
+                else if (melody_length >= 3000) melody_led <= 8'b1111_0000;
+                else if (melody_length >= 2000) melody_led <= 8'b1110_0000;
+                else if (melody_length >= 1000) melody_led <= 8'b1100_0000;
+                else if (melody_length > 0) melody_led <= 8'1000_0000;
+                else melody_led <= 8'b0000_0000;
+            end
+
+            if (playing) begin
+                if (play_index >= melody_length - 1) begin
+                    playing <= 0;
+                    play_index <= 0;
+                    alarm_triggered <= 0;
+                end
+                else play_index <= play_index + 1;
+            end
+
+            if (alarm_trigger && !alarm_triggered && !playing && melody_length > 0) begin
+                play_index <= 0;
+                playing <= 1;
+                alarm_triggered <= 1;
+            end
+
+            if (alarm_triggered && !alarm_trigger) alarm_triggered <= 0;
         end
     end
 endmodule
@@ -446,7 +453,7 @@ module lcd_display (
                 ENTRY_MODE: {RS, RW, DATA} <= 10'b00_0000_0110;
                 WRITE: begin
                     casez (mode)
-                        7'b001????: begin  // 알람 설정 모드
+                        7'b001????: begin
                             case (count)
                                 00: {RS, RW, DATA} <= 10'b00_1000_0000;
                                 01: {RS, RW, DATA} <= {2'b10, 8'h41}; // A
@@ -480,7 +487,7 @@ module lcd_display (
                                 default: {RS, RW, DATA} <= 10'b11_0000_0000;
                             endcase
                         end
-                        default: begin  // 일반 시계 모드
+                        default: begin
                             case (count)
                                 00: {RS, RW, DATA} <= 10'b00_1000_0000;
                                 01: {RS, RW, DATA} <= {2'b10, 8'h4B}; // K
@@ -530,9 +537,9 @@ module lcd_display (
 endmodule
 
 module piezo_player (
-    input wire clock, reset,  // 1MHz 클럭
+    input wire clock, reset,
     input wire [7:0] button,
-    output reg piezo
+    output reg PIEZO
 );
     localparam C2 = 12'd3830;
     localparam D2 = 12'd3400;
@@ -549,14 +556,14 @@ module piezo_player (
         if (!reset) lim = 12'd0;
         else begin
             casez (button)
-                8'b1???????: lim = C3;
-                8'b01??????: lim = B2;
-                8'b001?????: lim = A2;
-                8'b0001????: lim = G2;
-                8'b00001???: lim = F2;
-                8'b000001??: lim = E2;
-                8'b0000001?: lim = D2;
-                8'b00000001: lim = C2;
+                8'b1???????: lim = C2;
+                8'b01??????: lim = D2;
+                8'b001?????: lim = E2;
+                8'b0001????: lim = F2;
+                8'b00001???: lim = G2;
+                8'b000001??: lim = A2;
+                8'b0000001?: lim = B2;
+                8'b00000001: lim = C3;
                 default: lim = 12'd0;
             endcase
         end
@@ -564,11 +571,11 @@ module piezo_player (
 
     always @(posedge clock or negedge reset) begin
         if (!reset || !lim) begin
-            piezo <= 0;
+            PIEZO <= 0;
             cnt <= 0;
         end
         else if (cnt >= lim / 2) begin
-            piezo <= ~piezo;
+            PIEZO <= ~PIEZO;
             cnt <= 0;
         end
         else cnt <= cnt + 1;
