@@ -4,8 +4,7 @@ module clock (
     input wire [6:0] mode,
     input wire [11:0] button,
     output wire E, RS, RW,
-    output wire [7:0] DATA,
-    output reg [7:0] LED,
+    output wire [7:0] DATA, LED,
     output wire PIEZO
 );
     wire [11:0] button_t;
@@ -42,7 +41,9 @@ module clock (
 
     wire record_mode = mode[3];
     wire alarm_trigger;
-    wire [7:0] piezo_button;
+    wire [7:0] piezo_button, melody_led;
+
+    assign LED = record_mode ? melody_led : {7'b0000_000, alarm_enabled};
 
     one_shot_trigger #(.WIDTH(12)) ost1 (slow_clock, reset, button, button_t);
     
@@ -72,7 +73,7 @@ module clock (
         .button_t(button_t),
         .alarm_trigger(alarm_trigger),
         .piezo_button(piezo_button),
-        .melody_led(LED)
+        .melody_led(melody_led)
     );
 
     piezo_player pp1 (
@@ -217,7 +218,7 @@ module alarm_recorder (
                 else if (melody_length >= 3000) melody_led <= 8'b1111_0000;
                 else if (melody_length >= 2000) melody_led <= 8'b1110_0000;
                 else if (melody_length >= 1000) melody_led <= 8'b1100_0000;
-                else if (melody_length > 0) melody_led <= 8'1000_0000;
+                else if (melody_length > 0) melody_led <= 8'b1000_0000;
                 else melody_led <= 8'b0000_0000;
             end
 
