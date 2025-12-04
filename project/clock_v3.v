@@ -1,15 +1,12 @@
 module clock (
-    input wire clock,
-    input wire reset,
+    input wire clock, reset,
     input wire [6:0] mode,
     input wire [11:0] button,
     output wire E, RS, RW,
     output wire [7:0] DATA, LED,
     output wire PIEZO
 );
-    wire [11:0] button_t;
-
-    reg [9:0] clock_div;
+    reg [8:0] clock_div;
     reg slow_clock;
 
     always @(posedge clock or negedge reset) begin
@@ -18,39 +15,37 @@ module clock (
             slow_clock <= 0;
         end
         else begin
-            if (clock_div == 499) begin
+            if (clock_div >= 499) begin
                 clock_div <= 0;
                 slow_clock <= ~slow_clock;
             end
-            else begin
-                clock_div <= clock_div + 1;
-            end
+            else clock_div <= clock_div + 1;
         end
     end
 
     reg [9:0] count;
-
     reg [3:0] country;
-    reg [4:0] hour;
-    reg [5:0] minute, second;
-    reg mode_12_24;
 
-    reg [4:0] alarm_hour;
-    reg [5:0] alarm_minute;
-    reg alarm_enabled;
+    reg [4:0] hour, alarm_hour;
+    reg [5:0] minute, alarm_minute, timer_minute;
+    reg [5:0] second, timer_second;
 
-    wire record_mode = mode[3];
-    wire alarm_trigger;
-    wire [7:0] piezo_button, melody_led;
+    reg alarm_enabled, timer_started, mode_12_24;
 
-    assign LED = record_mode ? melody_led : {7'b0000_000, alarm_enabled};
+    wire [11:0] button_t;
+    wire [7:0] recording_led;
+    wire [3:0] note;
+
+    wire alarm =
+        (alarm_enabled && (hour == alarm_hour) && (minute == alarm_minute) && (second == 0)) ||
+        (timer_started && (timer_minute == 0) && (timer_second == 0));
 
     one_shot_trigger #(.WIDTH(12)) ost1 (slow_clock, reset, button, button_t);
     
     lcd_display ld1 (
-        .clock(slow_clock),
+        .clock(slow_clock), 
         .reset(reset), 
-        .mode(mode),
+        .mode(mode), 
         .country(country), 
         .hour(hour), 
         .minute(minute), 
@@ -58,52 +53,40 @@ module clock (
         .alarm_hour(alarm_hour),
         .alarm_minute(alarm_minute),
         .alarm_enabled(alarm_enabled),
+        .timer_minute(timer_minute),
+        .timer_second(timer_second),
+        .timer_started(timer_started),
         .mode_12_24(mode_12_24), 
         .E(E), 
         .RS(RS), 
         .RW(RW), 
-        .DATA(DATA)
+        .DATA(DATA), 
+        .LED(LED)
     );
+    
+    alarm_recorder ar1 (slow_clock, reset, mode, button_t, alarm, note, recording_led);
+    piezo_player pp1 (clock, reset, note, PIEZO);
 
-    alarm_recorder ar1 (
-        .clock(slow_clock),
-        .reset(reset),
-        .record_mode(record_mode),
-        .button(button),
-        .button_t(button_t),
-        .alarm_trigger(alarm_trigger),
-        .piezo_button(piezo_button),
-        .melody_led(melody_led)
-    );
+    assign LED = ((mode & 7'b0000100) != 0) ? recording_led : {7'b0000_000, alarm_enabled};
 
-    piezo_player pp1 (
-        .clock(clock),
-        .reset(reset),
-        .button(piezo_button),
-        .PIEZO(PIEZO)
-    );
-
-    assign alarm_trigger = alarm_enabled && 
-                          (hour == alarm_hour) && 
-                          (minute == alarm_minute) && 
-                          (second == 0);
-
-    integer i;
     always @(posedge slow_clock or negedge reset) begin
         if (!reset) begin
             count <= 0;
             country <= 4'h0;
             hour <= 0;
-            minute <= 0;
-            second <= 0;
-            mode_12_24 <= 0;
             alarm_hour <= 0;
+            minute <= 0;
             alarm_minute <= 0;
+            timer_minute <= 0;
+            second <= 0;
+            timer_second <= 0;
             alarm_enabled <= 0;
+            timer_started <= 0;
+            mode_12_24 <= 0;
         end
         else begin
-            casez (mode)
-                7'b1??????: begin
+            case (mode)
+                7'b1000000: begin
                     case (button_t)
                         12'b1000_0000_0000: hour <= (hour == 0) ? 23 : hour - 1;
                         12'b0010_0000_0000: hour <= (hour == 23) ? 0 : hour + 1;
@@ -114,145 +97,71 @@ module clock (
                         12'b0000_0000_0010: mode_12_24 <= !mode_12_24;
                     endcase
                 end
-                7'b01?????: begin
+                7'b0100000: begin
                     case (button_t)
                         12'b1000_0000_0000: country <= 4'h0;
                         12'b0100_0000_0000: country <= 4'h1;
                         12'b0010_0000_0000: country <= 4'h2;
                     endcase
                 end
-                7'b001????: begin
+                7'b0010000: begin
                     case (button_t)
                         12'b1000_0000_0000: alarm_hour <= (alarm_hour == 0) ? 23 : alarm_hour - 1;
                         12'b0010_0000_0000: alarm_hour <= (alarm_hour == 23) ? 0 : alarm_hour + 1;
                         12'b0001_0000_0000: alarm_minute <= (alarm_minute == 0) ? 59 : alarm_minute - 1;
                         12'b0000_0100_0000: alarm_minute <= (alarm_minute == 59) ? 0 : alarm_minute + 1;
-                        12'b0000_0000_0010: alarm_enabled <= !alarm_enabled;
+                        12'b0000_0000_0010: alarm_enabled <= ~alarm_enabled;
+                    endcase
+                end
+                7'b0001000: begin
+                    if (timer_started) begin
+                        count <= count + 1;
+
+                        if (count === 999) begin
+                            count <= 0;
+                            timer_second <= timer_second - 1;
+
+                            if (timer_second == 0) begin
+                                timer_second <= 59;
+                                timer_minute <= timer_minute - 1;
+
+                                if (timer_minute == 0) begin
+                                    timer_second <= 0;
+                                    timer_minute <= 0;
+                                end
+                            end
+                        end
+                    end
+
+                    case (button_t)
+                        12'b1000_0000_0000: timer_minute <= (timer_minute == 0) ? 59 : timer_minute - 1;
+                        12'b0010_0000_0000: timer_minute <= (timer_minute == 59) ? 0 : timer_minute + 1;
+                        12'b0001_0000_0000: timer_second <= (timer_second == 0) ? 59 : timer_second - 1;
+                        12'b0000_0100_0000: timer_second <= (timer_second == 59) ? 0 : timer_second + 1;
+                        12'b0000_0000_0010: timer_started <= ~timer_started;
                     endcase
                 end
                 default: begin
                     count <= count + 1;
+
                     if (count == 999) begin
                         count <= 0;
-                        second <= second + 1;
                         
-                        if (second == 59) begin
-                            second <= 0;
-                            minute <= minute + 1;
-
-                            if (minute == 59) begin
-                                minute <= 0;
-                                hour <= (hour == 23) ? 0 : hour + 1;
+                        if (timer_second == 0) begin
+                            if (timer_minute == 0) begin
+                                timer_started <= 0;
                             end
+                            else begin
+                                timer_second <= 59;
+                                timer_minute <= timer_minute - 1;
+                            end
+                        end
+                        else begin
+                            timer_second <= timer_second - 1;
                         end
                     end
                 end
             endcase
-        end
-    end
-endmodule
-
-module alarm_recorder (
-    input wire clock, reset,
-    input wire record_mode,
-    input wire [7:0] button,
-    input wire [11:0] button_t,
-    input wire alarm_trigger,
-    output reg [7:0] piezo_button,
-    output reg [7:0] melody_led
-);
-    reg [7:0] melody[0:1999];  // 2초 = 2000 샘플
-    reg [10:0] melody_length;  // 0~1999 (11비트)
-    reg [10:0] play_index;
-    reg playing;
-    reg alarm_triggered;
-
-    integer i;
-
-    always @(posedge clock or negedge reset) begin
-        if (!reset) begin
-            melody_length <= 0;
-            play_index <= 0;
-            playing <= 0;
-            alarm_triggered <= 0;
-            piezo_button <= 8'b00000000;
-            melody_led <= 8'b00000000;
-            for (i = 0; i < 2000; i = i + 1) begin
-                melody[i] <= 8'b00000000;
-            end
-        end
-        else begin
-            if (record_mode) piezo_button <= button;
-            else if (playing) piezo_button <= melody[play_index];
-            else piezo_button <= 8'b00000000;
-
-            if (record_mode) begin
-                if (melody_length < 2000) begin
-                    melody[melody_length] <= button;
-                    melody_length <= melody_length + 1;
-                end
-                else begin
-                    if (button_t[9] && !playing && melody_length > 0) begin
-                        play_index <= 0;
-                        playing <= 1;
-                    end
-
-                    if (button_t[11]) begin
-                        melody_length <= 0;
-                        play_index <= 0;
-                        playing <= 0;
-                        for (i = 0; i < 2000; i = i + 1) begin
-                            melody[i] <= 8'b00000000;
-                        end
-                    end
-                end
-
-                if (melody_length >= 1750) melody_led <= 8'b1111_1111;
-                else if (melody_length >= 1500) melody_led <= 8'b1111_1110;
-                else if (melody_length >= 1250) melody_led <= 8'b1111_1100;
-                else if (melody_length >= 1000) melody_led <= 8'b1111_1000;
-                else if (melody_length >= 750) melody_led <= 8'b1111_0000;
-                else if (melody_length >= 500) melody_led <= 8'b1110_0000;
-                else if (melody_length >= 250) melody_led <= 8'b1100_0000;
-                else if (melody_length > 0) melody_led <= 8'b1000_0000;
-                else melody_led <= 8'b0000_0000;
-            end
-
-            if (playing) begin
-                if (play_index >= melody_length - 1) begin
-                    playing <= 0;
-                    play_index <= 0;
-                    alarm_triggered <= 0;
-                end
-                else play_index <= play_index + 1;
-            end
-
-            if (alarm_trigger && !alarm_triggered && !playing && melody_length > 0) begin
-                play_index <= 0;
-                playing <= 1;
-                alarm_triggered <= 1;
-            end
-
-            if (alarm_triggered && !alarm_trigger) alarm_triggered <= 0;
-        end
-    end
-endmodule
-
-module one_shot_trigger #(parameter WIDTH = 1)(
-    input wire clock, reset,
-    input wire [WIDTH-1:0] i,
-    output reg [WIDTH-1:0] o
-);
-    reg [WIDTH-1:0] r;
-
-    always @(posedge clock or negedge reset) begin
-        if (!reset) begin
-            r <= {WIDTH{1'b0}};
-            o <= {WIDTH{1'b0}};
-        end
-        else begin
-            r <= i;
-            o <= i & ~r;
         end
     end
 endmodule
@@ -262,9 +171,9 @@ module lcd_display (
     input wire [6:0] mode,
     input wire [3:0] country,
     input wire [4:0] hour, alarm_hour,
-    input wire [5:0] minute, alarm_minute, second,
-    input wire alarm_enabled,
-    input wire mode_12_24,
+    input wire [5:0] minute, alarm_minute, timer_minute,
+    input wire [5:0] second, timer_second,
+    input wire alarm_enabled, timer_started, mode_12_24,
     output wire E,
     output reg RS, RW,
     output reg [7:0] DATA, LED
@@ -345,8 +254,9 @@ module lcd_display (
     reg [6:0] prev_mode;
     reg [3:0] prev_country;
     reg [4:0] prev_hour, prev_alarm_hour;
-    reg [5:0] prev_minute, prev_alarm_minute, prev_second;
-    reg prev_alarm_enabled, prev_mode_12_24;
+    reg [5:0] prev_minute, prev_alarm_minute, prev_timer_minute;
+    reg [5:0] prev_second, prev_timer_second;
+    reg prev_alarm_enabled, prev_timer_started, prev_mode_12_24;
 
     wire input_changed = (mode != prev_mode) ||
                          (country != prev_country) ||
@@ -354,8 +264,11 @@ module lcd_display (
                          (alarm_hour != prev_alarm_hour) ||
                          (minute != prev_minute) ||
                          (alarm_minute != prev_alarm_minute) ||
+                         (timer_minute != prev_timer_minute) ||
                          (second != prev_second) ||
+                         (timer_second != prev_timer_second) ||
                          (alarm_enabled != prev_alarm_enabled) ||
+                         (timer_started != prev_timer_started) ||
                          (mode_12_24 != prev_mode_12_24);
 
     assign E = clock;
@@ -370,8 +283,11 @@ module lcd_display (
             prev_alarm_hour <= 0;
             prev_minute <= 0;
             prev_alarm_minute <= 0;
+            prev_timer_minute <= 0;
             prev_second <= 0;
+            prev_timer_second <= 0;
             prev_alarm_enabled <= 0;
+            prev_timer_started <= 0;
             prev_mode_12_24 <= 0;
             LED <= 0;
         end
@@ -383,8 +299,11 @@ module lcd_display (
             prev_alarm_hour <= alarm_hour;
             prev_minute <= minute;
             prev_alarm_minute <= alarm_minute;
+            prev_timer_minute <= timer_minute;
             prev_second <= second;
+            prev_timer_second <= timer_second;
             prev_alarm_enabled <= alarm_enabled;
+            prev_timer_started <= timer_started;
             prev_mode_12_24 <= mode_12_24;
 
             case (state)
@@ -449,8 +368,8 @@ module lcd_display (
                 DISP_ONOFF: {RS, RW, DATA} <= 10'b00_0000_1100;
                 ENTRY_MODE: {RS, RW, DATA} <= 10'b00_0000_0110;
                 WRITE: begin
-                    casez (mode)
-                        7'b001????: begin
+                    case (mode)
+                        7'b0010000: begin
                             case (count)
                                 00: {RS, RW, DATA} <= 10'b00_1000_0000;
                                 01: {RS, RW, DATA} <= {2'b10, 8'h41}; // A
@@ -478,8 +397,40 @@ module lcd_display (
                                 22: {RS, RW, DATA} <= {2'b10, 8'h3A}; // :
                                 23: {RS, RW, DATA} <= 10'b10_0010_0000;
                                 24: {RS, RW, DATA} <= alarm_enabled ? {2'b10, 8'h4F} : {2'b10, 8'h4F}; // O
-                                25: {RS, RW, DATA} <= alarm_enabled ? {2'b10, 8'h4E} : {2'b10, 8'h46}; // N / FF
-                                26: {RS, RW, DATA} <= alarm_enabled ? 10'b10_0010_0000 : {2'b10, 8'h46}; //   / F
+                                25: {RS, RW, DATA} <= alarm_enabled ? {2'b10, 8'h4E} : {2'b10, 8'h46}; // N / F
+                                26: {RS, RW, DATA} <= alarm_enabled ? 10'b10_0010_0000 : {2'b10, 8'h46}; // / F
+
+                                default: {RS, RW, DATA} <= 10'b11_0000_0000;
+                            endcase
+                        end
+                        7'b0000100: begin
+                            case (count)
+                                00: {RS, RW, DATA} <= 10'b00_1000_0000;
+                                01: {RS, RW, DATA} <= {2'b10, 8'h54}; // T
+                                02: {RS, RW, DATA} <= {2'b10, 8'h49}; // I
+                                03: {RS, RW, DATA} <= {2'b10, 8'h4D}; // M
+                                04: {RS, RW, DATA} <= {2'b10, 8'h45}; // E
+                                05: {RS, RW, DATA} <= {2'b10, 8'h52}; // R
+                                06: {RS, RW, DATA} <= 10'b10_0010_0000;
+                                07: {RS, RW, DATA} <= 10'b10_0011_0000 + (timer_minute / 10);
+                                08: {RS, RW, DATA} <= 10'b10_0011_0000 + (timer_minute % 10);
+                                09: {RS, RW, DATA} <= {2'b10, 8'h3A}; // :
+                                10: {RS, RW, DATA} <= 10'b10_0011_0000 + (timer_second / 10);
+                                11: {RS, RW, DATA} <= 10'b10_0011_0000 + (timer_second % 10);
+
+                                12: {RS, RW, DATA} <= 10'b00_1100_0000;
+                                13: {RS, RW, DATA} <= {2'b10, 8'h53}; // S
+                                14: {RS, RW, DATA} <= {2'b10, 8'h74}; // t
+                                15: {RS, RW, DATA} <= {2'b10, 8'h61}; // a
+                                16: {RS, RW, DATA} <= {2'b10, 8'h74}; // t
+                                17: {RS, RW, DATA} <= {2'b10, 8'h75}; // u
+                                18: {RS, RW, DATA} <= {2'b10, 8'h73}; // s
+                                19: {RS, RW, DATA} <= {2'b10, 8'h3A}; // :
+                                20: {RS, RW, DATA} <= 10'b10_0010_0000;
+                                21: {RS, RW, DATA} <= timer_started ? {2'b10, 8'h52} : {2'b10, 8'h53}; // R / S
+                                22: {RS, RW, DATA} <= timer_started ? {2'b10, 8'h55} : {2'b10, 8'h54}; // U / T
+                                23: {RS, RW, DATA} <= timer_started ? {2'b10, 8'h4E} : {2'b10, 8'h4F}; // N / O
+                                24: {RS, RW, DATA} <= timer_started ? 10'b10_0010_0000 : {2'b10, 8'h50}; // / P
 
                                 default: {RS, RW, DATA} <= 10'b11_0000_0000;
                             endcase
@@ -533,9 +484,116 @@ module lcd_display (
     end
 endmodule
 
+module alarm_recorder (
+    input wire clock, reset,
+    input wire [6:0] mode,
+    input wire [11:0] button_t,
+    input wire alarm,
+    output reg [3:0] note,
+    output reg [7:0] recording_led
+);
+    reg [3:0] melody [63:0];
+    reg [5:0] melody_index, playing_index, index;
+
+    reg alarm_t, playing;
+
+    wire recording_mode = (mode & 7'b0000100) != 0;
+
+    one_shot_trigger #(.WIDTH(1)) ost1 (clock, reset, alarm, alarm_t);
+
+    always @(*) begin
+        if (playing) note = melody[playing_index];
+        else if (recording_mode) begin
+            case (button_t)
+                12'b1000_0000_0000: note = 4'd1; // C2
+                12'b0100_0000_0000: note = 4'd2; // D2
+                12'b0010_0000_0000: note = 4'd3; // E2
+                12'b0001_0000_0000: note = 4'd4; // F2
+                12'b0000_1000_0000: note = 4'd5; // G2
+                12'b0000_0100_0000: note = 4'd6; // A2
+                12'b0000_0010_0000: note = 4'd7; // B2
+                12'b0000_0001_0000: note = 4'd8; // C3
+                12'b0000_0000_1000: note = 4'd9; // D3
+                default: note = 4'd0;
+            endcase
+        end
+        else note = 4'd0;
+    end
+
+    always @(posedge clock or negedge reset) begin
+        if (!reset) begin
+            melody_index <= 0;
+            playing_index <= 0;
+            playing <= 0;
+
+            for (index = 0; index < 64; index = index + 1) begin
+                if (index < 32 && index[0] == 0) melody[index] <= 4'd8;
+                else melody[index] <= 4'd0;
+            end
+        end
+        else begin
+            if (recording_mode) begin
+                if (button_t[0]) begin
+                    melody_index <= 0;
+                    playing_index <= 0;
+                    playing <= 0;
+
+                    for (index = 0; index < 64; index = index + 1) begin
+                        if (index < 32 && index[0] == 0) melody[index] <= 4'd8;
+                        else melody[index] <= 4'd0;
+                    end
+                end
+                else if (button_t[1]) begin
+                    playing_index <= 0;
+                    playing <= 1;
+                end
+                else if (|button_t[11:2]) begin
+                    melody[melody_index + 0] <= note;
+                    melody[melody_index + 1] <= note;
+                    melody[melody_index + 2] <= note;
+                    melody[melody_index + 3] <= note;
+                    melody_index <= melody_index + 4;
+                end
+
+                if (melody_index == 0) recording_led <= 8'b1111_1111;
+                else if (melody_index >= 56) recording_led <= 8'b1111_1110;
+                else if (melody_index >= 48) recording_led <= 8'b1111_1100;
+                else if (melody_index >= 40) recording_led <= 8'b1111_1000;
+                else if (melody_index >= 32) recording_led <= 8'b1111_0000;
+                else if (melody_index >= 24) recording_led <= 8'b1110_0000;
+                else if (melody_index >= 16) recording_led <= 8'b1100_0000;
+                else if (melody_index >= 8) recording_led <= 8'b1000_0000;
+                else recording_led <= 8'b0000_0000;
+            end
+
+            if (playing) begin
+                if (melody_index == 0) begin
+                    if (playing_index >= 63) begin
+                        playing_index <= 0;
+                        playing <= 0;
+                    end
+                    else playing_index <= playing_index + 1;
+                end
+                else begin
+                    if (playing_index >= melody_index - 1) begin
+                        playing_index <= 0;
+                        playing <= 0;
+                    end
+                    else playing_index <= playing_index + 1;
+                end
+            end
+
+            if (alarm_t) begin
+                playing_index <= 0;
+                playing <= 1;
+            end
+        end
+    end
+endmodule
+
 module piezo_player (
     input wire clock, reset,
-    input wire [7:0] button,
+    input wire [3:0] note,
     output reg PIEZO
 );
     localparam C2 = 12'd3830;
@@ -548,34 +606,54 @@ module piezo_player (
     localparam C3 = 12'd1912;
     localparam D3 = 12'd1704;
 
-    reg [11:0] cnt, lim;
+    reg [11:0] count, limit;
 
     always @(*) begin
-        if (!reset) lim = 12'd0;
+        if (!reset) limit = 12'd0;
         else begin
-            casez (button)
-                8'b1???????: lim = C2;
-                8'b01??????: lim = D2;
-                8'b001?????: lim = E2;
-                8'b0001????: lim = F2;
-                8'b00001???: lim = G2;
-                8'b000001??: lim = A2;
-                8'b0000001?: lim = B2;
-                8'b00000001: lim = C3;
-                default: lim = 12'd0;
+            case (note)
+                4'd1: limit = C2;
+                4'd2: limit = D2;
+                4'd3: limit = E2;
+                4'd4: limit = F2;
+                4'd5: limit = G2;
+                4'd6: limit = A2;
+                4'd7: limit = B2;
+                4'd8: limit = C3;
+                4'd9: limit = D3;
+                default: limit = 12'd0;
             endcase
         end
     end
 
     always @(posedge clock or negedge reset) begin
-        if (!reset || !lim) begin
+        if (!reset || !limit) begin
+            count <= 0;
             PIEZO <= 0;
-            cnt <= 0;
         end
-        else if (cnt >= lim / 2) begin
+        else if (count >= limit / 2) begin
+            count <= 0;
             PIEZO <= ~PIEZO;
-            cnt <= 0;
         end
-        else cnt <= cnt + 1;
+        else count <= count + 1;
+    end
+endmodule
+
+module one_shot_trigger #(parameter WIDTH = 1)(
+    input wire clock, reset,
+    input wire [WIDTH-1:0] i,
+    output reg [WIDTH-1:0] o
+);
+    reg [WIDTH-1:0] r;
+
+    always @(posedge clock or negedge reset) begin
+        if (!reset) begin
+            r <= {WIDTH{1'b0}};
+            o <= {WIDTH{1'b0}};
+        end
+        else begin
+            r <= i;
+            o <= i & ~r;
+        end
     end
 endmodule
